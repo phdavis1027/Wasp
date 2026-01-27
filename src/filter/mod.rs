@@ -15,10 +15,11 @@ mod wrap;
 use std::future::Future;
 
 use futures_util::{future, TryFuture, TryFutureExt};
+use tokio_xmpp::Stanza;
 
-pub(crate) use crate::generic::{one, Combine, Either, Func, One, Tuple};
+use crate::filtered_stanza;
+pub(crate) use crate::generic::{Combine, Either, Func, Tuple};
 use crate::reject::{CombineRejection, IsReject, Rejection};
-use crate::route::{self, Route};
 
 pub(crate) use self::and::And;
 use self::and_then::AndThen;
@@ -32,7 +33,7 @@ use self::then::Then;
 use self::unify::Unify;
 use self::untuple_one::UntupleOne;
 pub use self::wrap::wrap_fn;
-pub(crate) use self::wrap::{Wrap, WrapSealed};
+pub(crate) use self::wrap::Wrap;
 
 // A crate-private base trait, allowing the actual `filter` method to change
 // signatures without it being a breaking change.
@@ -447,7 +448,7 @@ fn _assert_object_safe() {
 
 pub(crate) fn filter_fn<F, U>(func: F) -> FilterFn<F>
 where
-    F: Fn(&mut Route) -> U,
+    F: Fn(&mut Stanza) -> U,
     U: TryFuture,
     U::Ok: Tuple,
     U::Error: IsReject,
@@ -459,7 +460,7 @@ pub(crate) fn filter_fn_one<F, U>(
     func: F,
 ) -> impl Filter<Extract = (U::Ok,), Error = U::Error> + Copy
 where
-    F: Fn(&mut Route) -> U + Copy,
+    F: Fn(&mut Stanza) -> U + Copy,
     U: TryFuture + Send + 'static,
     U::Ok: Send,
     U::Error: IsReject,
@@ -476,7 +477,7 @@ pub(crate) struct FilterFn<F> {
 
 impl<F, U> FilterBase for FilterFn<F>
 where
-    F: Fn(&mut Route) -> U,
+    F: Fn(&mut Stanza) -> U,
     U: TryFuture + Send + 'static,
     U::Ok: Tuple + Send,
     U::Error: IsReject,
@@ -487,6 +488,6 @@ where
 
     #[inline]
     fn filter(&self, _: Internal) -> Self::Future {
-        route::with(|route| (self.func)(route)).into_future()
+        filtered_stanza::with(|stanza| (self.func)(stanza)).into_future()
     }
 }

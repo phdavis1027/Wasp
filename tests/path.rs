@@ -9,8 +9,8 @@ use warp::Filter;
 async fn path() {
     let _ = pretty_env_logger::try_init();
 
-    let foo = warp::path("foo");
-    let bar = warp::path(String::from("bar"));
+    let foo = warp::domain_is("foo");
+    let bar = warp::domain_is(String::from("bar"));
     let foo_bar = foo.and(bar.clone());
 
     // /foo
@@ -63,7 +63,7 @@ async fn param() {
 async fn end() {
     let _ = pretty_env_logger::try_init();
 
-    let foo = warp::path("foo");
+    let foo = warp::domain_is("foo");
     let end = warp::path::end();
     let foo_end = foo.and(end);
 
@@ -137,7 +137,7 @@ async fn tail() {
     assert_eq!(ex.as_str(), "foo/bar");
 
     // doesn't include previously matched prefix
-    let and = warp::path("foo").and(tail);
+    let and = warp::domain_is("foo").and(tail);
     let ex = warp::test::request()
         .path("/foo/bar")
         .filter(&and)
@@ -146,7 +146,7 @@ async fn tail() {
     assert_eq!(ex.as_str(), "bar");
 
     // sets unmatched path index to end
-    let m = tail.and(warp::path("foo"));
+    let m = tail.and(warp::domain_is("foo"));
     assert!(!warp::test::request().path("/foo/bar").matches(&m).await);
 
     let m = tail.and(warp::path::end());
@@ -165,9 +165,9 @@ async fn or() {
     let _ = pretty_env_logger::try_init();
 
     // /foo/bar OR /foo/baz
-    let foo = warp::path("foo");
-    let bar = warp::path("bar");
-    let baz = warp::path("baz");
+    let foo = warp::domain_is("foo");
+    let bar = warp::domain_is("bar");
+    let baz = warp::domain_is("baz");
     let p = foo.and(bar.or(baz));
 
     // /foo/bar
@@ -200,8 +200,8 @@ async fn or() {
 async fn or_else() {
     let _ = pretty_env_logger::try_init();
 
-    let foo = warp::path("foo");
-    let bar = warp::path("bar");
+    let foo = warp::domain_is("foo");
+    let bar = warp::domain_is("bar");
 
     let p = foo.and(bar.or_else(|_| future::ok::<_, std::convert::Infallible>(())));
 
@@ -234,7 +234,7 @@ async fn path_macro() {
     assert!(!req.matches(&p).await);
 
     let req = warp::test::request().path("/foo/bar/baz");
-    let p = path!("foo" / "bar").and(warp::path("baz"));
+    let p = path!("foo" / "bar").and(warp::domain_is("baz"));
     assert!(!req.matches(&p).await);
 
     // Prefix syntax
@@ -262,8 +262,8 @@ async fn path_macro() {
 async fn full_path() {
     let full_path = warp::path::full();
 
-    let foo = warp::path("foo");
-    let bar = warp::path("bar");
+    let foo = warp::domain_is("foo");
+    let bar = warp::domain_is("bar");
     let param = warp::path::param::<u32>();
 
     // matches full request path
@@ -334,8 +334,8 @@ async fn full_path() {
 async fn peek() {
     let peek = warp::path::peek();
 
-    let foo = warp::path("foo");
-    let bar = warp::path("bar");
+    let foo = warp::domain_is("foo");
+    let bar = warp::domain_is("bar");
     let param = warp::path::param::<u32>();
 
     // matches full request path

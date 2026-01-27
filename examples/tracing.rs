@@ -26,7 +26,7 @@ async fn main() {
         .with_span_events(FmtSpan::CLOSE)
         .init();
 
-    let hello = warp::path("hello")
+    let hello = warp::domain_is("hello")
         .and(warp::get())
         // When the `hello` route is called, emit a `tracing` event.
         .map(|| {
@@ -37,7 +37,7 @@ async fn main() {
         // to any events that occur inside it.
         .with(warp::trace::named("hello"));
 
-    let goodbye = warp::path("goodbye")
+    let goodbye = warp::domain_is("goodbye")
         .and(warp::get())
         .map(|| {
             tracing::info!("saying goodbye...");

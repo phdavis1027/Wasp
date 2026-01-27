@@ -8,7 +8,6 @@ use pin_project::pin_project;
 use super::{Filter, FilterBase, Func, Internal};
 use crate::generic::Either;
 use crate::reject::IsReject;
-use crate::route;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Recover<T, F> {
@@ -28,10 +27,8 @@ where
     type Future = RecoverFuture<T, F>;
     #[inline]
     fn filter(&self, _: Internal) -> Self::Future {
-        let idx = route::with(|route| route.matched_path_index());
         RecoverFuture {
             state: State::First(self.filter.filter(Internal), self.callback.clone()),
-            original_path_index: PathIndex(idx),
         }
     }
 }
@@ -47,7 +44,6 @@ where
 {
     #[pin]
     state: State<T, F>,
-    original_path_index: PathIndex,
 }
 
 #[pin_project(project = StateProj)]
@@ -61,15 +57,6 @@ where
     First(#[pin] T::Future, F),
     Second(#[pin] F::Output),
     Done,
-}
-
-#[derive(Copy, Clone)]
-struct PathIndex(usize);
-
-impl PathIndex {
-    fn reset_path(&self) {
-        route::with(|route| route.reset_matched_path_index(self.0));
-    }
 }
 
 impl<T, F> Future for RecoverFuture<T, F>
@@ -106,7 +93,6 @@ where
                 StateProj::Done => panic!("polled after complete"),
             };
 
-            pin.original_path_index.reset_path();
             let fut2 = second.call(err);
             self.set(RecoverFuture {
                 state: State::Second(fut2),

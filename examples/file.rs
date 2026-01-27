@@ -11,7 +11,7 @@ async fn main() {
         .and(warp::fs::file("./README.md"));
 
     // dir already requires GET...
-    let examples = warp::path("ex").and(warp::fs::dir("./examples/"));
+    let examples = warp::domain_is("ex").and(warp::fs::dir("./examples/"));
 
     // GET / => README.md
     // GET /ex/... => ./examples/..

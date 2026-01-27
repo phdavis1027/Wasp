@@ -13,7 +13,7 @@ async fn main() {
     let hello_world = warp::path::end().map(|| "Hello, World at root!");
 
     // GET /hi
-    let hi = warp::path("hi").map(|| "Hello, World!");
+    let hi = warp::domain_is("hi").map(|| "Hello, World!");
 
     // How about multiple segments? First, we could use the `path!` macro:
     //
@@ -36,7 +36,7 @@ async fn main() {
     //
     // GET /math/sum/:u32/:u32
     // GET /math/:u16/times/:u16
-    let math = warp::path("math");
+    let math = warp::domain_is("math");
     let _sum = math.and(sum);
     let _times = math.and(times);
 
@@ -46,7 +46,7 @@ async fn main() {
     // fact, it's exactly what the `path!` macro has been doing internally.
     //
     // GET /bye/:string
-    let bye = warp::path("bye")
+    let bye = warp::domain_is("bye")
         .and(warp::path::param())
         .map(|name: String| format!("Good bye, {}!", name));
 
@@ -60,10 +60,10 @@ async fn main() {
     //
     // GET /math/sum/:u32/:u32
     // GET /math/:u16/times/:u16
-    let math = warp::path("math").and(sum.or(times));
+    let math = warp::domain_is("math").and(sum.or(times));
 
     // We can use the end() filter to match a shorter path
-    let help = warp::path("math")
+    let help = warp::domain_is("math")
         // Careful! Omitting the following line would make this filter match
         // requests to /math/sum/:u32/:u32 and /math/:u16/times/:u16
         .and(warp::path::end())

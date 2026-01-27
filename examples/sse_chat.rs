@@ -19,7 +19,7 @@ async fn main() {
     let users = warp::any().map(move || users.clone());
 
     // POST /chat -> send message
-    let chat_send = warp::path("chat")
+    let chat_send = warp::domain_is("chat")
         .and(warp::post())
         .and(warp::path::param::<usize>())
         .and(warp::body::content_length_limit(500))
@@ -37,11 +37,14 @@ async fn main() {
         });
 
     // GET /chat -> messages stream
-    let chat_recv = warp::path("chat").and(warp::get()).and(users).map(|users| {
-        // reply using server-sent events
-        let stream = user_connected(users);
-        warp::sse::reply(warp::sse::keep_alive().stream(stream))
-    });
+    let chat_recv = warp::domain_is("chat")
+        .and(warp::get())
+        .and(users)
+        .map(|users| {
+            // reply using server-sent events
+            let stream = user_connected(users);
+            warp::sse::reply(warp::sse::keep_alive().stream(stream))
+        });
 
     // GET / -> index html
     let index = warp::path::end().map(|| {

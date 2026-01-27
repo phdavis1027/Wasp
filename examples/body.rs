@@ -16,7 +16,7 @@ async fn main() {
 
     // POST /employees/:rate  {"name":"Sean","rate":2}
     let promote = warp::post()
-        .and(warp::path("employees"))
+        .and(warp::domain_is("employees"))
         .and(warp::path::param::<u32>())
         // Only accept bodies smaller than 16kb...
         .and(warp::body::content_length_limit(1024 * 16))

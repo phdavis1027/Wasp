@@ -20,8 +20,8 @@ async fn method() {
 #[tokio::test]
 async fn method_not_allowed_trumps_not_found() {
     let _ = pretty_env_logger::try_init();
-    let get = warp::get().and(warp::path("hello").map(warp::reply));
-    let post = warp::post().and(warp::path("bye").map(warp::reply));
+    let get = warp::get().and(warp::domain_is("hello").map(warp::reply));
+    let post = warp::post().and(warp::domain_is("bye").map(warp::reply));
 
     let routes = get.or(post);
 
@@ -36,10 +36,10 @@ async fn method_not_allowed_trumps_not_found() {
 async fn bad_request_trumps_method_not_allowed() {
     let _ = pretty_env_logger::try_init();
     let get = warp::get()
-        .and(warp::path("hello"))
+        .and(warp::domain_is("hello"))
         .and(warp::header::exact("foo", "bar"))
         .map(warp::reply);
-    let post = warp::post().and(warp::path("bye")).map(warp::reply);
+    let post = warp::post().and(warp::domain_is("bye")).map(warp::reply);
 
     let routes = get.or(post);
 

@@ -8,7 +8,6 @@ use pin_project::pin_project;
 use super::{Filter, FilterBase, Internal};
 use crate::generic::Either;
 use crate::reject::CombineRejection;
-use crate::route;
 
 type Combined<E1, E2> = <E1 as CombineRejection<E2>>::Combined;
 
@@ -30,10 +29,8 @@ where
     type Future = EitherFuture<T, U>;
 
     fn filter(&self, _: Internal) -> Self::Future {
-        let idx = route::with(|route| route.matched_path_index());
         EitherFuture {
             state: State::First(self.first.filter(Internal), self.second.clone()),
-            original_path_index: PathIndex(idx),
         }
     }
 }
@@ -43,7 +40,6 @@ where
 pub struct EitherFuture<T: Filter, U: Filter> {
     #[pin]
     state: State<T, U>,
-    original_path_index: PathIndex,
 }
 
 #[pin_project(project = StateProj)]
@@ -51,15 +47,6 @@ enum State<T: Filter, U: Filter> {
     First(#[pin] T::Future, U),
     Second(Option<T::Error>, #[pin] U::Future),
     Done,
-}
-
-#[derive(Copy, Clone)]
-struct PathIndex(usize);
-
-impl PathIndex {
-    fn reset_path(&self) {
-        route::with(|route| route.reset_matched_path_index(self.0));
-    }
 }
 
 impl<T, U> Future for EitherFuture<T, U>
@@ -78,16 +65,12 @@ where
                     Ok(ex1) => {
                         return Poll::Ready(Ok((Either::A(ex1),)));
                     }
-                    Err(e) => {
-                        pin.original_path_index.reset_path();
-                        (e, second.filter(Internal))
-                    }
+                    Err(e) => (e, second.filter(Internal)),
                 },
                 StateProj::Second(err1, second) => {
                     let ex2 = match ready!(second.try_poll(cx)) {
                         Ok(ex2) => Ok((Either::B(ex2),)),
                         Err(e) => {
-                            pin.original_path_index.reset_path();
                             let err1 = err1.take().expect("polled after complete");
                             Err(e.combine(err1))
                         }

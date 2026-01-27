@@ -24,7 +24,7 @@ async fn uses_tracing() {
             tracing::info!("printed for every request");
         })
         .untuple_one()
-        .and(warp::path("aa"))
+        .and(warp::domain_is("aa"))
         .map(|| {
             tracing::info!("only printed when path '/aa' matches");
         })

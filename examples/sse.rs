@@ -14,7 +14,7 @@ fn sse_counter(counter: u64) -> Result<Event, Infallible> {
 async fn main() {
     pretty_env_logger::init();
 
-    let routes = warp::path("ticks").and(warp::get()).map(|| {
+    let routes = warp::domain_is("ticks").and(warp::get()).map(|| {
         let mut counter: u64 = 0;
         // create server event source
         let interval = interval(Duration::from_secs(1));

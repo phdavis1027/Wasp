@@ -253,7 +253,7 @@ struct MyQuery {
 
 #[tokio::test]
 async fn ws_with_query() {
-    let ws_filter = warp::path("my-ws")
+    let ws_filter = warp::domain_is("my-ws")
         .and(warp::query::<MyQuery>())
         .and(warp::ws())
         .map(|query: MyQuery, ws: warp::ws::Ws| {

@@ -15,7 +15,6 @@ use http::header;
 use crate::filter::{Filter, WrapSealed};
 use crate::reject::IsReject;
 use crate::reply::Reply;
-use crate::route::Route;
 
 use self::internal::WithTrace;
 
@@ -130,7 +129,7 @@ pub struct Trace<F> {
 /// Information about the request/response that can be used to prepare log lines.
 #[allow(missing_debug_implementations)]
 pub struct Info<'a> {
-    route: &'a Route,
+    route: &'a FilteredStanza,
 }
 
 impl<FN, F> WrapSealed<F> for Trace<FN>
@@ -201,10 +200,10 @@ mod internal {
 
     use super::{Info, Trace};
     use crate::filter::{Filter, FilterBase, Internal};
+    use crate::filtered_stanza;
     use crate::reject::IsReject;
     use crate::reply::Reply;
     use crate::reply::Response;
-    use crate::route;
 
     #[allow(missing_debug_implementations)]
     pub struct Traced(pub(super) Response);
@@ -284,7 +283,7 @@ mod internal {
         >;
 
         fn filter(&self, _: Internal) -> Self::Future {
-            let span = route::with(|route| (self.trace.func)(Info { route }));
+            let span = filtered_stanza::with(|route| (self.trace.func)(Info { route }));
             let _entered = span.enter();
 
             tracing::info!(target: "warp::filters::trace", "processing request");

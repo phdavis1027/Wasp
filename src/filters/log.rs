@@ -8,7 +8,7 @@ use http::{header, StatusCode};
 use crate::filter::{Filter, WrapSealed};
 use crate::reject::IsReject;
 use crate::reply::Reply;
-use crate::route::Route;
+use crate::filtered_stanza::FilteredStanza;
 
 use self::internal::WithLog;
 
@@ -84,7 +84,7 @@ pub struct Log<F> {
 /// Information about the request/response that can be used to prepare log lines.
 #[allow(missing_debug_implementations)]
 pub struct Info<'a> {
-    route: &'a Route,
+    route: &'a FilteredStanza,
     start: Instant,
     status: StatusCode,
 }
@@ -187,7 +187,7 @@ mod internal {
     use crate::filter::{Filter, FilterBase, Internal};
     use crate::reject::IsReject;
     use crate::reply::{Reply, Response};
-    use crate::route;
+    use crate::filtered_stanza;
 
     #[allow(missing_debug_implementations)]
     pub struct Logged(pub(super) Response);
@@ -259,7 +259,7 @@ mod internal {
                 }
             };
 
-            route::with(|route| {
+            filtered_stanza::with(|route| {
                 (self.log.func)(Info {
                     route,
                     start: self.started,

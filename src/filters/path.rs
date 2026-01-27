@@ -135,7 +135,7 @@ use http::uri::PathAndQuery;
 use self::internal::Opaque;
 use crate::filter::{filter_fn, one, Filter, FilterBase, Internal, One, Tuple};
 use crate::reject::{self, Rejection};
-use crate::route::{self, Route};
+use crate::filtered_stanza::{self, FilteredStanza};
 
 /// Create an exact match path segment [`Filter`].
 ///
@@ -164,19 +164,14 @@ use crate::route::{self, Route};
 /// let hello = warp::path("hello")
 ///     .map(|| "Hello, World!");
 /// ```
-pub fn path<P>(p: P) -> Exact<Opaque<P>>
+pub fn domain_is<D>(d: D) -> Exact<Opaque<D>>
 where
-    P: AsRef<str>,
+    D: AsRef<str>,
 {
-    let s = p.as_ref();
-    assert!(!s.is_empty(), "exact path segments should not be empty");
-    assert!(
-        !s.contains('/'),
-        "exact path segments should not contain a slash: {:?}",
-        s
-    );
+    let s = d.as_ref();
+    assert!(!s.is_empty(), "exact domain name should not be empty");
 
-    Exact(Opaque(p))
+    Exact(Opaque(d))
     /*
     segment(move |seg| {
         tracing::trace!("{:?}?: {:?}", p, seg);
@@ -206,7 +201,7 @@ where
 
     #[inline]
     fn filter(&self, _: Internal) -> Self::Future {
-        route::with(|route| {
+        filtered_stanza::with(|route| {
             let p = self.0.as_ref();
             future::ready(with_segment(route, |seg| {
                 tracing::trace!("{:?}?: {:?}", p, seg);
@@ -440,7 +435,7 @@ where
     filter_fn(move |route| future::ready(with_segment(route, func)))
 }
 
-fn with_segment<F, U>(route: &mut Route, func: F) -> Result<U, Rejection>
+fn with_segment<F, U>(route: &mut FilteredStanza, func: F) -> Result<U, Rejection>
 where
     F: Fn(&str) -> Result<U, Rejection>,
 {
@@ -453,7 +448,7 @@ where
     ret
 }
 
-fn segment(route: &Route) -> &str {
+fn segment(route: &FilteredStanza) -> &str {
     route
         .path()
         .splitn(2, '/')
@@ -461,7 +456,7 @@ fn segment(route: &Route) -> &str {
         .expect("split always has at least 1")
 }
 
-fn path_and_query(route: &Route) -> PathAndQuery {
+fn path_and_query(route: &FilteredStanza) -> PathAndQuery {
     route
         .uri()
         .path_and_query()
@@ -632,13 +627,13 @@ mod tests {
         use std::mem::{size_of, size_of_val};
 
         assert_eq!(
-            size_of_val(&path("hello")),
+            size_of_val(&domain_is("hello")),
             size_of::<&str>(),
             "exact(&str) is size of &str"
         );
 
         assert_eq!(
-            size_of_val(&path(String::from("world"))),
+            size_of_val(&domain_is(String::from("world"))),
             size_of::<String>(),
             "exact(String) is size of String"
         );

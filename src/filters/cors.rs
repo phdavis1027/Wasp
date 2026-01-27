@@ -463,9 +463,9 @@ mod internal {
 
     use super::{Configured, CorsForbidden, Validated};
     use crate::filter::{Filter, FilterBase, Internal, One};
+    use crate::filtered_stanza;
     use crate::generic::Either;
     use crate::reject::{CombineRejection, Rejection};
-    use crate::route;
 
     #[derive(Clone, Debug)]
     pub struct CorsFilter<F> {
@@ -489,8 +489,9 @@ mod internal {
         >;
 
         fn filter(&self, _: Internal) -> Self::Future {
-            let validated =
-                route::with(|route| self.config.check_request(route.method(), route.headers()));
+            let validated = filtered_stanza::with(|route| {
+                self.config.check_request(route.method(), route.headers())
+            });
 
             match validated {
                 Ok(Validated::Preflight(origin)) => {

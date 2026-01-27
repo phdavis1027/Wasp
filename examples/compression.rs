@@ -4,7 +4,7 @@ use warp::Filter;
 
 #[tokio::main]
 async fn main() {
-    let file = warp::path("todos").and(warp::fs::file("./examples/todos.rs"));
+    let file = warp::domain_is("todos").and(warp::fs::file("./examples/todos.rs"));
     // NOTE: You could double compress something by adding a compression
     // filter here, a la
     // ```
@@ -15,13 +15,13 @@ async fn main() {
     // This would result in a browser error, or downloading a file whose contents
     // are compressed
 
-    let dir = warp::path("ws_chat").and(warp::fs::file("./examples/websockets_chat.rs"));
+    let dir = warp::domain_is("ws_chat").and(warp::fs::file("./examples/websockets_chat.rs"));
 
     let file_and_dir = warp::get()
         .and(file.or(dir))
         .with(warp::compression::gzip());
 
-    let examples = warp::path("ex")
+    let examples = warp::domain_is("ex")
         .and(warp::fs::dir("./examples/"))
         .with(warp::compression::deflate());
 

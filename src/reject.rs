@@ -1,143 +1,52 @@
 //! Rejections
 //!
 //! Part of the power of the [`Filter`](../trait.Filter.html) system is being able to
-//! reject a request from a filter chain. This allows for filters to be
-//! combined with `or`, so that if one side of the chain finds that a request
+//! reject a stanza from a filter chain. This allows for filters to be
+//! combined with `or`, so that if one side of the chain finds that a stanza
 //! doesn't fulfill its requirements, the other side can try to process
-//! the request.
+//! the stanza.
 //!
 //! Many of the built-in [`filters`](../filters) will automatically reject
-//! the request with an appropriate rejection. However, you can also build
+//! the stanza with an appropriate rejection. However, you can also build
 //! new custom [`Filter`](../trait.Filter.html)s and still want other routes to be
 //! matchable in the case a predicate doesn't hold.
 //!
-//! As a request is processed by a Filter chain, the rejections are accumulated into
+//! As a stanza is processed by a Filter chain, the rejections are accumulated into
 //! a list contained by the [`Rejection`](struct.Rejection.html) type. Rejections from
 //! filters can be handled using [`Filter::recover`](../trait.Filter.html#method.recover).
-//! This is a convenient way to map rejections into a [`Reply`](../reply/trait.Reply.html).
 //!
-//! For a more complete example see the
-//! [Rejection Example](https://github.com/seanmonstar/warp/blob/master/examples/rejections.rs)
-//! from the repository.
+//! # XMPP Error Conditions
 //!
-//! # Example
-//!
-//! ```
-//! use warp::{reply, Reply, Filter, reject, Rejection, http::StatusCode};
-//!
-//! #[derive(Debug)]
-//! struct InvalidParameter;
-//!
-//! impl reject::Reject for InvalidParameter {}
-//!
-//! // Custom rejection handler that maps rejections into responses.
-//! async fn handle_rejection(err: Rejection) -> Result<impl Reply, std::convert::Infallible> {
-//!     if err.is_not_found() {
-//!         Ok(reply::with_status("NOT_FOUND", StatusCode::NOT_FOUND))
-//!     } else if let Some(e) = err.find::<InvalidParameter>() {
-//!         Ok(reply::with_status("BAD_REQUEST", StatusCode::BAD_REQUEST))
-//!     } else {
-//!         eprintln!("unhandled rejection: {:?}", err);
-//!         Ok(reply::with_status("INTERNAL_SERVER_ERROR", StatusCode::INTERNAL_SERVER_ERROR))
-//!     }
-//! }
-//!
-//!
-//! // Filter on `/:id`, but reject with InvalidParameter if the `id` is `0`.
-//! // Recover from this rejection using a custom rejection handler.
-//! let route = warp::path::param()
-//!     .and_then(|id: u32| async move {
-//!         if id == 0 {
-//!             Err(warp::reject::custom(InvalidParameter))
-//!         } else {
-//!             Ok("id is valid")
-//!         }
-//!     })
-//!     .recover(handle_rejection);
-//! ```
+//! Rejections map to XMPP stanza error conditions as defined in RFC 6120 and XEP-0086.
+//! Each rejection type corresponds to a specific XMPP error condition that will be
+//! included in the error stanza response.
 
 use std::any::Any;
 use std::convert::Infallible;
-use std::error::Error as StdError;
 use std::fmt;
 
-use crate::bodyt::Body;
-use http::{
-    header::{HeaderValue, CONTENT_TYPE},
-    StatusCode,
-};
+pub use xmpp_parsers::stanza_error::{DefinedCondition, ErrorType, StanzaError};
 
 pub(crate) use self::sealed::{CombineRejection, IsReject};
 
-/// Rejects a request with `404 Not Found`.
+/// Rejects a stanza with `item-not-found`.
 #[inline]
 pub fn reject() -> Rejection {
-    not_found()
+    item_not_found()
 }
 
-/// Rejects a request with `404 Not Found`.
+/// Rejects a stanza with `item-not-found`.
 #[inline]
-pub fn not_found() -> Rejection {
+pub fn item_not_found() -> Rejection {
     Rejection {
-        reason: Reason::NotFound,
+        reason: Reason::ItemNotFound,
     }
 }
 
-// 400 Bad Request
-#[inline]
-pub(crate) fn invalid_query() -> Rejection {
-    known(InvalidQuery { _p: () })
-}
-
-// 400 Bad Request
-#[inline]
-pub(crate) fn missing_header(name: &'static str) -> Rejection {
-    known(MissingHeader { name })
-}
-
-// 400 Bad Request
-#[inline]
-pub(crate) fn invalid_header(name: &'static str) -> Rejection {
-    known(InvalidHeader { name })
-}
-
-// 400 Bad Request
-#[inline]
-pub(crate) fn missing_cookie(name: &'static str) -> Rejection {
-    known(MissingCookie { name })
-}
-
-// 405 Method Not Allowed
-#[inline]
-pub(crate) fn method_not_allowed() -> Rejection {
-    known(MethodNotAllowed { _p: () })
-}
-
-// 411 Length Required
-#[inline]
-pub(crate) fn length_required() -> Rejection {
-    known(LengthRequired { _p: () })
-}
-
-// 413 Payload Too Large
-#[inline]
-pub(crate) fn payload_too_large() -> Rejection {
-    known(PayloadTooLarge { _p: () })
-}
-
-// 415 Unsupported Media Type
-//
-// Used by the body filters if the request payload content-type doesn't match
-// what can be deserialized.
-#[inline]
-pub(crate) fn unsupported_media_type() -> Rejection {
-    known(UnsupportedMediaType { _p: () })
-}
-
-/// Rejects a request with a custom cause.
+/// Rejects a stanza with a custom cause.
 ///
-/// A [`recover`][] filter should convert this `Rejection` into a `Reply`,
-/// or else this will be returned as a `500 Internal Server Error`.
+/// A [`recover`][] filter should convert this `Rejection` into an appropriate
+/// XMPP error stanza, or else this will be returned as an `internal-server-error`.
 ///
 /// [`recover`]: ../trait.Filter.html#method.recover
 pub fn custom<T: Reject>(err: T) -> Rejection {
@@ -206,7 +115,7 @@ pub struct Rejection {
 }
 
 enum Reason {
-    NotFound,
+    ItemNotFound,
     Other(Box<Rejections>),
 }
 
@@ -271,23 +180,27 @@ macro_rules! enum_known {
 }
 
 enum_known! {
-    MethodNotAllowed(MethodNotAllowed),
-    InvalidHeader(InvalidHeader),
-    MissingHeader(MissingHeader),
-    MissingCookie(MissingCookie),
-    InvalidQuery(InvalidQuery),
-    LengthRequired(LengthRequired),
-    PayloadTooLarge(PayloadTooLarge),
-    UnsupportedMediaType(UnsupportedMediaType),
-    FileOpenError(crate::fs::FileOpenError),
-    FilePermissionError(crate::fs::FilePermissionError),
-    BodyReadError(crate::filters::body::BodyReadError),
-    BodyDeserializeError(crate::filters::body::BodyDeserializeError),
-    CorsForbidden(crate::cors::CorsForbidden),
-    #[cfg(feature = "websocket")]
-    MissingConnectionUpgrade(crate::ws::MissingConnectionUpgrade),
-    MissingExtension(crate::ext::MissingExtension),
-    BodyConsumedMultipleTimes(crate::filters::body::BodyConsumedMultipleTimes),
+    BadRequest(BadRequest),
+    Conflict(Conflict),
+    FeatureNotImplemented(FeatureNotImplemented),
+    Forbidden(Forbidden),
+    Gone(Gone),
+    InternalServerError(InternalServerError),
+    ItemNotFound(ItemNotFound),
+    JidMalformed(JidMalformed),
+    NotAcceptable(NotAcceptable),
+    NotAllowed(NotAllowed),
+    NotAuthorized(NotAuthorized),
+    RecipientUnavailable(RecipientUnavailable),
+    Redirect(Redirect),
+    RegistrationRequired(RegistrationRequired),
+    RemoteServerNotFound(RemoteServerNotFound),
+    RemoteServerTimeout(RemoteServerTimeout),
+    ResourceConstraint(ResourceConstraint),
+    ServiceUnavailable(ServiceUnavailable),
+    SubscriptionRequired(SubscriptionRequired),
+    UndefinedCondition(UndefinedCondition),
+    UnexpectedRequest(UnexpectedRequest),
 }
 
 impl Rejection {
@@ -329,17 +242,17 @@ impl Rejection {
         None
     }
 
-    /// Returns true if this Rejection was made via `warp::reject::not_found`.
+    /// Returns true if this Rejection was made via `warp::reject::item_not_found`.
     ///
     /// # Example
     ///
     /// ```
     /// let rejection = warp::reject();
     ///
-    /// assert!(rejection.is_not_found());
+    /// assert!(rejection.is_item_not_found());
     /// ```
-    pub fn is_not_found(&self) -> bool {
-        matches!(self.reason, Reason::NotFound)
+    pub fn is_item_not_found(&self) -> bool {
+        matches!(self.reason, Reason::ItemNotFound)
     }
 }
 
@@ -358,31 +271,32 @@ impl From<Infallible> for Rejection {
 }
 
 impl IsReject for Infallible {
-    fn status(&self) -> StatusCode {
+    fn error_condition(&self) -> DefinedCondition {
         match *self {}
     }
 
-    fn into_response(&self) -> crate::reply::Response {
+    fn into_stanza_error(&self) -> StanzaError {
         match *self {}
     }
 }
 
 impl IsReject for Rejection {
-    fn status(&self) -> StatusCode {
+    fn error_condition(&self) -> DefinedCondition {
         match self.reason {
-            Reason::NotFound => StatusCode::NOT_FOUND,
-            Reason::Other(ref other) => other.status(),
+            Reason::ItemNotFound => DefinedCondition::ItemNotFound,
+            Reason::Other(ref other) => other.error_condition(),
         }
     }
 
-    fn into_response(&self) -> crate::reply::Response {
+    fn into_stanza_error(&self) -> StanzaError {
         match self.reason {
-            Reason::NotFound => {
-                let mut res = http::Response::default();
-                *res.status_mut() = StatusCode::NOT_FOUND;
-                res
-            }
-            Reason::Other(ref other) => other.into_response(),
+            Reason::ItemNotFound => StanzaError::new(
+                ErrorType::Cancel,
+                DefinedCondition::ItemNotFound,
+                "en",
+                "item-not-found",
+            ),
+            Reason::Other(ref other) => other.into_stanza_error(),
         }
     }
 }
@@ -396,7 +310,7 @@ impl fmt::Debug for Rejection {
 impl fmt::Debug for Reason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Reason::NotFound => f.write_str("NotFound"),
+            Reason::ItemNotFound => f.write_str("ItemNotFound"),
             Reason::Other(ref other) => match **other {
                 Rejections::Known(ref e) => fmt::Debug::fmt(e, f),
                 Rejections::Custom(ref e) => fmt::Debug::fmt(e, f),
@@ -414,57 +328,95 @@ impl fmt::Debug for Reason {
 // ===== Rejections =====
 
 impl Rejections {
-    fn status(&self) -> StatusCode {
+    fn error_condition(&self) -> DefinedCondition {
         match *self {
             Rejections::Known(ref k) => match *k {
-                Known::MethodNotAllowed(_) => StatusCode::METHOD_NOT_ALLOWED,
-                Known::InvalidHeader(_)
-                | Known::MissingHeader(_)
-                | Known::MissingCookie(_)
-                | Known::InvalidQuery(_)
-                | Known::BodyReadError(_)
-                | Known::BodyDeserializeError(_) => StatusCode::BAD_REQUEST,
-                #[cfg(feature = "websocket")]
-                Known::MissingConnectionUpgrade(_) => StatusCode::BAD_REQUEST,
-                Known::LengthRequired(_) => StatusCode::LENGTH_REQUIRED,
-                Known::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
-                Known::UnsupportedMediaType(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                Known::FilePermissionError(_) | Known::CorsForbidden(_) => StatusCode::FORBIDDEN,
-                Known::FileOpenError(_)
-                | Known::MissingExtension(_)
-                | Known::BodyConsumedMultipleTimes(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                Known::BadRequest(_) => DefinedCondition::BadRequest,
+                Known::Conflict(_) => DefinedCondition::Conflict,
+                Known::FeatureNotImplemented(_) => DefinedCondition::FeatureNotImplemented,
+                Known::Forbidden(_) => DefinedCondition::Forbidden,
+                Known::Gone(_) => DefinedCondition::Gone { new_address: None },
+                Known::InternalServerError(_) => DefinedCondition::InternalServerError,
+                Known::ItemNotFound(_) => DefinedCondition::ItemNotFound,
+                Known::JidMalformed(_) => DefinedCondition::JidMalformed,
+                Known::NotAcceptable(_) => DefinedCondition::NotAcceptable,
+                Known::NotAllowed(_) => DefinedCondition::NotAllowed,
+                Known::NotAuthorized(_) => DefinedCondition::NotAuthorized,
+                Known::RecipientUnavailable(_) => DefinedCondition::RecipientUnavailable,
+                Known::Redirect(_) => DefinedCondition::Redirect { new_address: None },
+                Known::RegistrationRequired(_) => DefinedCondition::RegistrationRequired,
+                Known::RemoteServerNotFound(_) => DefinedCondition::RemoteServerNotFound,
+                Known::RemoteServerTimeout(_) => DefinedCondition::RemoteServerTimeout,
+                Known::ResourceConstraint(_) => DefinedCondition::ResourceConstraint,
+                Known::ServiceUnavailable(_) => DefinedCondition::ServiceUnavailable,
+                Known::SubscriptionRequired(_) => DefinedCondition::SubscriptionRequired,
+                Known::UndefinedCondition(_) => DefinedCondition::UndefinedCondition,
+                Known::UnexpectedRequest(_) => DefinedCondition::UnexpectedRequest,
             },
-            Rejections::Custom(..) => StatusCode::INTERNAL_SERVER_ERROR,
-            Rejections::Combined(..) => self.preferred().status(),
+            Rejections::Custom(..) => DefinedCondition::UndefinedCondition,
+            Rejections::Combined(..) => self.preferred().error_condition(),
         }
     }
 
-    fn into_response(&self) -> crate::reply::Response {
+    fn error_type(&self) -> ErrorType {
         match *self {
-            Rejections::Known(ref e) => {
-                let mut res = http::Response::new(Body::from(e.to_string()));
-                *res.status_mut() = self.status();
-                res.headers_mut().insert(
-                    CONTENT_TYPE,
-                    HeaderValue::from_static("text/plain; charset=utf-8"),
-                );
-                res
-            }
+            Rejections::Known(ref k) => match *k {
+                // Auth errors - retry after providing credentials
+                Known::NotAuthorized(_)
+                | Known::Forbidden(_)
+                | Known::RegistrationRequired(_)
+                | Known::SubscriptionRequired(_) => ErrorType::Auth,
+
+                // Cancel errors - do not retry
+                Known::Conflict(_)
+                | Known::FeatureNotImplemented(_)
+                | Known::Gone(_)
+                | Known::InternalServerError(_)
+                | Known::ItemNotFound(_)
+                | Known::NotAllowed(_)
+                | Known::RemoteServerNotFound(_) => ErrorType::Cancel,
+
+                // Modify errors - retry after changing data
+                Known::BadRequest(_)
+                | Known::JidMalformed(_)
+                | Known::NotAcceptable(_)
+                | Known::Redirect(_) => ErrorType::Modify,
+
+                // Wait errors - retry after waiting
+                Known::RecipientUnavailable(_)
+                | Known::RemoteServerTimeout(_)
+                | Known::ResourceConstraint(_)
+                | Known::ServiceUnavailable(_) => ErrorType::Wait,
+
+                // Undefined - default to cancel
+                Known::UndefinedCondition(_) | Known::UnexpectedRequest(_) => ErrorType::Cancel,
+            },
+            Rejections::Custom(..) => ErrorType::Cancel,
+            Rejections::Combined(..) => self.preferred().error_type(),
+        }
+    }
+
+    fn into_stanza_error(&self) -> StanzaError {
+        match *self {
+            Rejections::Known(ref e) => StanzaError::new(
+                self.error_type(),
+                self.error_condition(),
+                "en",
+                e.to_string(),
+            ),
             Rejections::Custom(ref e) => {
                 tracing::error!(
-                    "unhandled custom rejection, returning 500 response: {:?}",
+                    "unhandled custom rejection, returning undefined-condition: {:?}",
                     e
                 );
-                let body = format!("Unhandled rejection: {:?}", e);
-                let mut res = http::Response::new(Body::from(body));
-                *res.status_mut() = self.status();
-                res.headers_mut().insert(
-                    CONTENT_TYPE,
-                    HeaderValue::from_static("text/plain; charset=utf-8"),
-                );
-                res
+                StanzaError::new(
+                    ErrorType::Cancel,
+                    DefinedCondition::UndefinedCondition,
+                    "en",
+                    format!("Unhandled rejection: {:?}", e),
+                )
             }
-            Rejections::Combined(..) => self.preferred().into_response(),
+            Rejections::Combined(..) => self.preferred().into_stanza_error(),
         }
     }
 
@@ -497,19 +449,13 @@ impl Rejections {
             Rejections::Combined(a, b) => {
                 let a = a.preferred();
                 let b = b.preferred();
-                // Now both a and b are known or custom, so it is safe
-                // to get status
-                // Compare status codes, with this priority:
-                // - NOT_FOUND is lowest
-                // - METHOD_NOT_ALLOWED is second
-                // - if one status code is greater than the other
-                // - otherwise, prefer A...
-                match (a.status(), b.status()) {
-                    (_, StatusCode::NOT_FOUND) => a,
-                    (StatusCode::NOT_FOUND, _) => b,
-                    (_, StatusCode::METHOD_NOT_ALLOWED) => a,
-                    (StatusCode::METHOD_NOT_ALLOWED, _) => b,
-                    (sa, sb) if sa < sb => b,
+                // Compare error types with this priority:
+                // - ItemNotFound is lowest (default rejection)
+                // - Custom rejections are higher priority
+                // - Otherwise prefer the first one
+                match (a.error_condition(), b.error_condition()) {
+                    (_, DefinedCondition::ItemNotFound) => a,
+                    (DefinedCondition::ItemNotFound, _) => b,
                     _ => a,
                 }
             }
@@ -517,105 +463,137 @@ impl Rejections {
     }
 }
 
-unit_error! {
-    /// Invalid query
-    pub InvalidQuery: "Invalid query string"
+crate::unit_error! {
+    /// The sender has sent a stanza containing XML that does not conform to the appropriate schema
+    /// or that cannot be processed (e.g., an IQ stanza that includes an unrecognized value of the
+    /// 'type' attribute, or an element that is qualified by a recognized namespace but that violates
+    /// the defined syntax for that element).
+    pub BadRequest: "bad-request"
 }
 
-unit_error! {
-    /// HTTP method not allowed
-    pub MethodNotAllowed: "HTTP method not allowed"
+crate::unit_error! {
+    /// Access cannot be granted because an existing resource exists with the same name or address.
+    pub Conflict: "conflict"
 }
 
-unit_error! {
-    /// A content-length header is required
-    pub LengthRequired: "A content-length header is required"
+crate::unit_error! {
+    /// The feature requested is not implemented by the recipient or server and therefore cannot be processed.
+    pub FeatureNotImplemented: "feature-not-implemented"
 }
 
-unit_error! {
-    /// The request payload is too large
-    pub PayloadTooLarge: "The request payload is too large"
+crate::unit_error! {
+    /// The requesting entity does not possess the necessary permissions to perform an action that
+    /// only certain authorized roles or individuals are allowed to complete.
+    pub Forbidden: "forbidden"
 }
 
-unit_error! {
-    /// The request's content-type is not supported
-    pub UnsupportedMediaType: "The request's content-type is not supported"
+crate::unit_error! {
+    /// The recipient or server can no longer be contacted at this address, typically on a permanent
+    /// basis. The associated error text SHOULD include a new address or inform the sender of
+    /// appropriate action to take.
+    pub Gone: "gone"
 }
 
-/// Missing request header
-#[derive(Debug)]
-pub struct MissingHeader {
-    name: &'static str,
+crate::unit_error! {
+    /// The server has experienced a misconfiguration or other internal error that prevents it from
+    /// processing the stanza.
+    pub InternalServerError: "internal-server-error"
 }
 
-impl MissingHeader {
-    /// Retrieve the name of the header that was missing
-    pub fn name(&self) -> &str {
-        self.name
-    }
+crate::unit_error! {
+    /// The addressed JID or item requested cannot be found.
+    pub ItemNotFound: "item-not-found"
 }
 
-impl fmt::Display for MissingHeader {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Missing request header {:?}", self.name)
-    }
+crate::unit_error! {
+    /// The sending entity has provided an invalid JID.
+    pub JidMalformed: "jid-malformed"
 }
 
-impl StdError for MissingHeader {}
-
-/// Invalid request header
-#[derive(Debug)]
-pub struct InvalidHeader {
-    name: &'static str,
+crate::unit_error! {
+    /// The recipient or server understands the request but cannot process it because it does not
+    /// meet criteria imposed by the recipient or server (e.g., a request to subscribe to information
+    /// that does not simultaneously include configuration parameters acceptable to the recipient).
+    pub NotAcceptable: "not-acceptable"
 }
 
-impl InvalidHeader {
-    /// Retrieve the name of the header that was invalid
-    pub fn name(&self) -> &str {
-        self.name
-    }
+crate::unit_error! {
+    /// The recipient or server does not allow any entity to perform the action.
+    pub NotAllowed: "not-allowed"
 }
 
-impl fmt::Display for InvalidHeader {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Invalid request header {:?}", self.name)
-    }
+crate::unit_error! {
+    /// The sender needs to provide credentials before being allowed to perform the action, or has
+    /// provided improper credentials.
+    pub NotAuthorized: "not-authorized"
 }
 
-impl StdError for InvalidHeader {}
-
-/// Missing cookie
-#[derive(Debug)]
-pub struct MissingCookie {
-    name: &'static str,
+crate::unit_error! {
+    /// The intended recipient is temporarily unavailable, undergoing maintenance, etc.
+    pub RecipientUnavailable: "recipient-unavailable"
 }
 
-impl MissingCookie {
-    /// Retrieve the name of the cookie that was missing
-    pub fn name(&self) -> &str {
-        self.name
-    }
+crate::unit_error! {
+    /// The recipient or server is redirecting requests for this information to another entity,
+    /// typically in a temporary fashion.
+    pub Redirect: "redirect"
 }
 
-impl fmt::Display for MissingCookie {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Missing request cookie {:?}", self.name)
-    }
+crate::unit_error! {
+    /// The requesting entity is not authorized to access the requested service because prior
+    /// registration is necessary.
+    pub RegistrationRequired: "registration-required"
 }
 
-impl StdError for MissingCookie {}
+crate::unit_error! {
+    /// A remote server or service specified as part or all of the JID of the intended recipient
+    /// does not exist or cannot be resolved.
+    pub RemoteServerNotFound: "remote-server-not-found"
+}
+
+crate::unit_error! {
+    /// A remote server or service specified as part or all of the JID of the intended recipient
+    /// could not be contacted within a reasonable amount of time.
+    pub RemoteServerTimeout: "remote-server-timeout"
+}
+
+crate::unit_error! {
+    /// The server or recipient is busy or lacks the system resources necessary to service the request.
+    pub ResourceConstraint: "resource-constraint"
+}
+
+crate::unit_error! {
+    /// The server or recipient does not currently provide the requested service.
+    pub ServiceUnavailable: "service-unavailable"
+}
+
+crate::unit_error! {
+    /// The requesting entity is not authorized to access the requested service because a prior
+    /// subscription is necessary.
+    pub SubscriptionRequired: "subscription-required"
+}
+
+crate::unit_error! {
+    /// The error condition is not one of those defined by the other conditions in this list.
+    pub UndefinedCondition: "undefined-condition"
+}
+
+crate::unit_error! {
+    /// The recipient or server understood the request but was not expecting it at this time
+    /// (e.g., the request was out of order).
+    pub UnexpectedRequest: "unexpected-request"
+}
 
 mod sealed {
-    use super::{Reason, Rejection, Rejections};
-    use http::StatusCode;
+    use super::{DefinedCondition, Reason, Rejection, Rejections, StanzaError};
     use std::convert::Infallible;
     use std::fmt;
 
     // This sealed trait exists to allow Filters to return either `Rejection`
     // or `!`. There are no other types that make sense, and so it is sealed.
     pub trait IsReject: fmt::Debug + Send + Sync {
-        fn status(&self) -> StatusCode;
-        fn into_response(&self) -> crate::reply::Response;
+        fn error_condition(&self) -> DefinedCondition;
+        fn into_stanza_error(&self) -> StanzaError;
     }
 
     fn _assert_object_safe() {
@@ -663,12 +641,12 @@ mod sealed {
                 (Reason::Other(left), Reason::Other(right)) => {
                     Reason::Other(Box::new(Rejections::Combined(left, right)))
                 }
-                (Reason::Other(other), Reason::NotFound)
-                | (Reason::NotFound, Reason::Other(other)) => {
-                    // ignore the NotFound
+                (Reason::Other(other), Reason::ItemNotFound)
+                | (Reason::ItemNotFound, Reason::Other(other)) => {
+                    // ignore the ItemNotFound
                     Reason::Other(other)
                 }
-                (Reason::NotFound, Reason::NotFound) => Reason::NotFound,
+                (Reason::ItemNotFound, Reason::ItemNotFound) => Reason::ItemNotFound,
             };
 
             Rejection { reason }
@@ -717,91 +695,59 @@ mod tests {
     impl Reject for Right {}
 
     #[test]
-    fn rejection_status() {
-        assert_eq!(not_found().status(), StatusCode::NOT_FOUND);
+    fn rejection_error_condition() {
         assert_eq!(
-            method_not_allowed().status(),
-            StatusCode::METHOD_NOT_ALLOWED
+            item_not_found().error_condition(),
+            DefinedCondition::ItemNotFound
         );
-        assert_eq!(length_required().status(), StatusCode::LENGTH_REQUIRED);
-        assert_eq!(payload_too_large().status(), StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(
-            unsupported_media_type().status(),
-            StatusCode::UNSUPPORTED_MEDIA_TYPE
+            custom(Left).error_condition(),
+            DefinedCondition::UndefinedCondition
         );
-        assert_eq!(custom(Left).status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    #[tokio::test]
-    async fn combine_rejection_causes_with_some_left_and_none_right() {
+    #[test]
+    fn combine_rejection_causes_with_some_left_and_none_right() {
         let left = custom(Left);
-        let right = not_found();
+        let right = item_not_found();
         let reject = left.combine(right);
-        let resp = reject.into_response();
+        let err = reject.into_stanza_error();
 
-        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(
-            response_body_string(resp).await,
-            "Unhandled rejection: Left"
-        )
+        assert_eq!(err.defined_condition, DefinedCondition::UndefinedCondition);
     }
 
-    #[tokio::test]
-    async fn combine_rejection_causes_with_none_left_and_some_right() {
-        let left = not_found();
+    #[test]
+    fn combine_rejection_causes_with_none_left_and_some_right() {
+        let left = item_not_found();
         let right = custom(Right);
         let reject = left.combine(right);
-        let resp = reject.into_response();
+        let err = reject.into_stanza_error();
 
-        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(
-            response_body_string(resp).await,
-            "Unhandled rejection: Right"
-        )
+        assert_eq!(err.defined_condition, DefinedCondition::UndefinedCondition);
     }
 
-    #[tokio::test]
-    async fn unhandled_customs() {
-        let reject = not_found().combine(custom(Right));
+    #[test]
+    fn unhandled_customs() {
+        let reject = item_not_found().combine(custom(Right));
 
-        let resp = reject.into_response();
-        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(
-            response_body_string(resp).await,
-            "Unhandled rejection: Right"
-        );
+        let err = reject.into_stanza_error();
+        assert_eq!(err.defined_condition, DefinedCondition::UndefinedCondition);
 
-        // There's no real way to determine which is worse, since both are a 500,
-        // so pick the first one.
+        // There's no real way to determine which is worse, so pick the first one.
         let reject = custom(Left).combine(custom(Right));
 
-        let resp = reject.into_response();
-        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(
-            response_body_string(resp).await,
-            "Unhandled rejection: Left"
-        );
+        let err = reject.into_stanza_error();
+        assert_eq!(err.defined_condition, DefinedCondition::UndefinedCondition);
 
-        // With many rejections, custom still is top priority.
-        let reject = not_found()
-            .combine(not_found())
-            .combine(not_found())
+        // With many rejections, custom still is top priority over item-not-found.
+        let reject = item_not_found()
+            .combine(item_not_found())
+            .combine(item_not_found())
             .combine(custom(Right))
-            .combine(not_found());
+            .combine(item_not_found());
 
-        let resp = reject.into_response();
-        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(
-            response_body_string(resp).await,
-            "Unhandled rejection: Right"
-        );
-    }
-
-    async fn response_body_string(resp: crate::reply::Response) -> String {
-        use http_body_util::BodyExt;
-        let (_, body) = resp.into_parts();
-        let body_bytes = body.collect().await.unwrap().to_bytes();
-        String::from_utf8_lossy(&body_bytes).to_string()
+        let err = reject.into_stanza_error();
+        assert_eq!(err.defined_condition, DefinedCondition::UndefinedCondition);
     }
 
     #[test]
@@ -810,10 +756,10 @@ mod tests {
 
         assert_eq!(rej.find::<Left>(), Some(&Left));
 
-        let rej = rej.combine(method_not_allowed());
+        let rej = rej.combine(known(BadRequest { _p: () }));
 
         assert_eq!(rej.find::<Left>(), Some(&Left));
-        assert!(rej.find::<MethodNotAllowed>().is_some(), "MethodNotAllowed");
+        assert!(rej.find::<BadRequest>().is_some(), "BadRequest");
     }
 
     #[test]
@@ -833,7 +779,7 @@ mod tests {
         F: Fn(u32) -> R,
         R: Reject,
     {
-        let mut rej = not_found();
+        let mut rej = item_not_found();
 
         for i in 0..n {
             rej = rej.combine(custom(new_reject(i)));
@@ -851,21 +797,19 @@ mod tests {
     }
 
     #[test]
-    fn convert_big_rejections_into_response() {
+    fn convert_big_rejections_into_stanza_error() {
         let mut rejections = Rejections::Custom(Box::new(std::io::Error::from_raw_os_error(100)));
         for _ in 0..50 {
             rejections = Rejections::Combined(
-                Box::new(Rejections::Known(Known::MethodNotAllowed(
-                    MethodNotAllowed { _p: () },
-                ))),
+                Box::new(Rejections::Known(Known::BadRequest(BadRequest { _p: () }))),
                 Box::new(rejections),
             );
         }
         let reason = Reason::Other(Box::new(rejections));
         let rejection = Rejection { reason };
         assert_eq!(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            rejection.into_response().status()
+            DefinedCondition::UndefinedCondition,
+            rejection.into_stanza_error().defined_condition
         );
     }
 }

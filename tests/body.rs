@@ -14,7 +14,7 @@ async fn matches() {
 
     assert!(req.matches(&concat).await);
 
-    let p = warp::path("body");
+    let p = warp::domain_is("body");
     let req = warp::test::request().path("/body");
 
     let and = p.and(concat);

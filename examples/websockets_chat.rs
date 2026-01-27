@@ -31,7 +31,7 @@ async fn main() {
     let users = warp::any().map(move || users.clone());
 
     // GET /chat -> websocket upgrade
-    let chat = warp::path("chat")
+    let chat = warp::domain_is("chat")
         // The `ws()` filter will prepare Websocket handshake...
         .and(warp::ws())
         .and(users)
