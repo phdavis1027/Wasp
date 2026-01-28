@@ -1,5 +1,7 @@
 //! Message stanza extraction.
 
+pub mod body;
+
 use futures_util::future;
 use tokio_xmpp::Stanza;
 use xmpp_parsers::message::Message;

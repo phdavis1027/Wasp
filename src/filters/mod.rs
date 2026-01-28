@@ -5,6 +5,7 @@
 
 pub mod any;
 pub mod id;
+pub mod log;
 pub mod stanza;
 
 pub use crate::filter::BoxedFilter;

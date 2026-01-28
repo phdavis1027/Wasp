@@ -91,6 +91,7 @@ mod sealed {
     pub trait ReplySealed {}
 
     impl<T: ReplySealed + Send> ReplySealed for Option<T> {}
+    impl ReplySealed for crate::filters::log::internal::Logged {}
 }
 
 pub(crate) use self::sealed::ReplySealed;

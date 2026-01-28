@@ -45,10 +45,15 @@ pub mod id {
     //! Stanza ID filters.
     pub use crate::filters::id::param;
 }
+pub use self::filters::log::log;
 pub use self::filters::stanza::iq;
 pub use self::filters::stanza::message;
 pub use self::filters::stanza::presence;
-pub use self::filters::stanza::{recipient, reply, sender};
+pub use self::filters::stanza::{echo, recipient, reply, sender, sink};
+pub mod log {
+    //! Stanza logging.
+    pub use crate::filters::log::{custom, Info, Log};
+}
 pub use self::reject::{reject, Rejection};
 pub use self::reply::Reply;
 #[cfg(feature = "server")]

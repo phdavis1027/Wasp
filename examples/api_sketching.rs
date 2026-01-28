@@ -9,8 +9,20 @@ async fn main() {
         .await
         .expect("Failed to connect");
 
-    // component.serve(warp::reply("Hello, World!")).run().await;
-    component.serve(warp::iq()).run().await;
+    println!("Component connected. Running...");
 
-    component.serve(warp::iq::param()).await;
+    component
+        .serve(
+            // Handle IQ stanzas with a fixed reply
+            warp::iq()
+                .and(warp::reply("Hello, Iq!"))
+                // Handle messages by echoing the body back
+                .or(warp::message().and(warp::echo()))
+                // Handle presence (log and send no reply)
+                .or(warp::presence()
+                    .and(warp::sink())
+                    .with(warp::log("presence"))),
+        )
+        .run()
+        .await;
 }

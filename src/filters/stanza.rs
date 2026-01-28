@@ -139,3 +139,40 @@ pub fn reply(
             msg.with_body(Lang::default(), body.clone())
         })
 }
+
+/// Extract the message body and echo it back as a reply.
+///
+/// # Example
+///
+/// ```ignore
+/// use warp::Filter;
+///
+/// let route = warp::message()
+///     .then(warp::echo());
+/// ```
+pub fn echo() -> impl Filter<Extract = One<Message>, Error = Rejection> + Copy {
+    message::body::param().and(sender()).and(recipient()).map(
+        |body: String, from: Option<Jid>, to: Option<Jid>| {
+            let mut msg = Message::new(from);
+            msg.from = to;
+            msg.with_body(Lang::default(), body)
+        },
+    )
+}
+
+/// Produce no reply.
+///
+/// A filter that always succeeds and produces `None` as a reply,
+/// effectively consuming the stanza without sending a response.
+///
+/// # Example
+///
+/// ```ignore
+/// use warp::Filter;
+///
+/// let route = warp::presence()
+///     .and(warp::sink());
+/// ```
+pub fn sink() -> impl Filter<Extract = One<Option<Message>>, Error = Infallible> + Copy {
+    filter_fn_one(|_: &mut Stanza| future::ok::<_, Infallible>(None))
+}

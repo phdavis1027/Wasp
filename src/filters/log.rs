@@ -3,12 +3,12 @@
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use http::{header, StatusCode};
+use tokio_xmpp::Stanza;
+use xmpp_parsers::jid::Jid;
 
 use crate::filter::{Filter, WrapSealed};
 use crate::reject::IsReject;
 use crate::reply::Reply;
-use crate::filtered_stanza::FilteredStanza;
 
 use self::internal::WithLog;
 
@@ -19,29 +19,23 @@ use self::internal::WithLog;
 ///
 /// # Example
 ///
-/// ```
+/// ```ignore
 /// use warp::Filter;
 ///
-/// // If using something like `pretty_env_logger`,
-/// // view logs by setting `RUST_LOG=example::api`.
 /// let log = warp::log("example::api");
-/// let route = warp::any()
-///     .map(warp::reply)
+/// let route = warp::presence()
+///     .map(warp::sink)
 ///     .with(log);
 /// ```
 pub fn log(name: &'static str) -> Log<impl Fn(Info<'_>) + Copy> {
     let func = move |info: Info<'_>| {
-        // TODO?
-        // - response content length?
         log::info!(
             target: name,
-            "\"{} {} {:?}\" {} \"{}\" \"{}\" {:?}",
-            info.method(),
-            info.path(),
-            info.route.version(),
-            info.status().as_u16(),
-            OptFmt(info.referer()),
-            OptFmt(info.user_agent()),
+            "{} from={} to={} id={} {:?}",
+            info.stanza_type(),
+            OptFmt(info.from()),
+            OptFmt(info.to()),
+            OptFmt(info.id()),
             info.elapsed(),
         );
     };
@@ -52,20 +46,18 @@ pub fn log(name: &'static str) -> Log<impl Fn(Info<'_>) + Copy> {
 ///
 /// # Example
 ///
-/// ```
+/// ```ignore
 /// use warp::Filter;
 ///
 /// let log = warp::log::custom(|info| {
-///     // Use a log macro, or slog, or println, or whatever!
 ///     eprintln!(
-///         "{} {} {}",
-///         info.method(),
-///         info.path(),
-///         info.status(),
+///         "{} from {:?}",
+///         info.stanza_type(),
+///         info.from(),
 ///     );
 /// });
-/// let route = warp::any()
-///     .map(warp::reply)
+/// let route = warp::presence()
+///     .map(warp::sink)
 ///     .with(log);
 /// ```
 pub fn custom<F>(func: F) -> Log<F>
@@ -75,18 +67,17 @@ where
     Log { func }
 }
 
-/// Decorates a [`Filter`] to log requests and responses.
+/// Decorates a [`Filter`] to log stanzas.
 #[derive(Clone, Copy, Debug)]
 pub struct Log<F> {
     func: F,
 }
 
-/// Information about the request/response that can be used to prepare log lines.
+/// Information about the stanza being processed.
 #[allow(missing_debug_implementations)]
 pub struct Info<'a> {
-    route: &'a FilteredStanza,
+    stanza: &'a Stanza,
     start: Instant,
-    status: StatusCode,
 }
 
 impl<FN, F> WrapSealed<F> for Log<FN>
@@ -107,58 +98,65 @@ where
 }
 
 impl<'a> Info<'a> {
-    /// View the `http::Method` of the request.
-    pub fn method(&self) -> &http::Method {
-        self.route.method()
+    /// The type of stanza ("message", "iq", or "presence").
+    pub fn stanza_type(&self) -> &'static str {
+        match self.stanza {
+            Stanza::Message(_) => "message",
+            Stanza::Iq(_) => "iq",
+            Stanza::Presence(_) => "presence",
+        }
     }
 
-    /// View the URI path of the request.
-    pub fn path(&self) -> &str {
-        self.route.full_path()
+    /// The sender JID (from attribute).
+    pub fn from(&self) -> Option<&Jid> {
+        match self.stanza {
+            Stanza::Message(m) => m.from.as_ref(),
+            Stanza::Iq(iq) => match iq {
+                xmpp_parsers::iq::Iq::Get { from, .. }
+                | xmpp_parsers::iq::Iq::Set { from, .. }
+                | xmpp_parsers::iq::Iq::Result { from, .. }
+                | xmpp_parsers::iq::Iq::Error { from, .. } => from.as_ref(),
+            },
+            Stanza::Presence(p) => p.from.as_ref(),
+        }
     }
 
-    /// View the `http::Version` of the request.
-    pub fn version(&self) -> http::Version {
-        self.route.version()
+    /// The recipient JID (to attribute).
+    pub fn to(&self) -> Option<&Jid> {
+        match self.stanza {
+            Stanza::Message(m) => m.to.as_ref(),
+            Stanza::Iq(iq) => match iq {
+                xmpp_parsers::iq::Iq::Get { to, .. }
+                | xmpp_parsers::iq::Iq::Set { to, .. }
+                | xmpp_parsers::iq::Iq::Result { to, .. }
+                | xmpp_parsers::iq::Iq::Error { to, .. } => to.as_ref(),
+            },
+            Stanza::Presence(p) => p.to.as_ref(),
+        }
     }
 
-    /// View the `http::StatusCode` of the response.
-    pub fn status(&self) -> http::StatusCode {
-        self.status
+    /// The stanza ID.
+    pub fn id(&self) -> Option<&str> {
+        match self.stanza {
+            Stanza::Message(m) => m.id.as_ref().map(|id| id.0.as_str()),
+            Stanza::Iq(iq) => Some(match iq {
+                xmpp_parsers::iq::Iq::Get { id, .. }
+                | xmpp_parsers::iq::Iq::Set { id, .. }
+                | xmpp_parsers::iq::Iq::Result { id, .. }
+                | xmpp_parsers::iq::Iq::Error { id, .. } => id.as_str(),
+            }),
+            Stanza::Presence(p) => p.id.as_deref(),
+        }
     }
 
-    /// View the referer of the request.
-    pub fn referer(&self) -> Option<&str> {
-        self.route
-            .headers()
-            .get(header::REFERER)
-            .and_then(|v| v.to_str().ok())
+    /// The full stanza for custom inspection.
+    pub fn stanza(&self) -> &Stanza {
+        self.stanza
     }
 
-    /// View the user agent of the request.
-    pub fn user_agent(&self) -> Option<&str> {
-        self.route
-            .headers()
-            .get(header::USER_AGENT)
-            .and_then(|v| v.to_str().ok())
-    }
-
-    /// View the `Duration` that elapsed for the request.
+    /// Time elapsed since filter started processing.
     pub fn elapsed(&self) -> Duration {
         tokio::time::Instant::now().into_std() - self.start
-    }
-
-    /// View the host of the request
-    pub fn host(&self) -> Option<&str> {
-        self.route
-            .headers()
-            .get(header::HOST)
-            .and_then(|v| v.to_str().ok())
-    }
-
-    /// Access the full headers of the request
-    pub fn request_headers(&self) -> &http::HeaderMap {
-        self.route.headers()
     }
 }
 
@@ -174,7 +172,7 @@ impl<T: fmt::Display> fmt::Display for OptFmt<T> {
     }
 }
 
-mod internal {
+pub(crate) mod internal {
     use std::future::Future;
     use std::pin::Pin;
     use std::task::{Context, Poll};
@@ -182,19 +180,20 @@ mod internal {
 
     use futures_util::{ready, TryFuture};
     use pin_project::pin_project;
+    use tokio_xmpp::Stanza;
 
     use super::{Info, Log};
     use crate::filter::{Filter, FilterBase, Internal};
-    use crate::reject::IsReject;
-    use crate::reply::{Reply, Response};
     use crate::filtered_stanza;
+    use crate::reject::IsReject;
+    use crate::reply::Reply;
 
     #[allow(missing_debug_implementations)]
-    pub struct Logged(pub(super) Response);
+    pub struct Logged(pub(super) Option<Stanza>);
 
     impl Reply for Logged {
         #[inline]
-        fn into_response(self) -> Response {
+        fn into_response(self) -> Option<Stanza> {
             self.0
         }
     }
@@ -247,25 +246,19 @@ mod internal {
 
         fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
             let pin = self.as_mut().project();
-            let (result, status) = match ready!(pin.future.try_poll(cx)) {
+            let result = match ready!(pin.future.try_poll(cx)) {
                 Ok(reply) => {
                     let resp = reply.into_response();
-                    let status = resp.status();
-                    (Poll::Ready(Ok((Logged(resp),))), status)
+                    filtered_stanza::with(|stanza| {
+                        (self.log.func)(Info {
+                            stanza,
+                            start: self.started,
+                        });
+                    });
+                    Poll::Ready(Ok((Logged(resp),)))
                 }
-                Err(reject) => {
-                    let status = reject.status();
-                    (Poll::Ready(Err(reject)), status)
-                }
+                Err(reject) => Poll::Ready(Err(reject)),
             };
-
-            filtered_stanza::with(|route| {
-                (self.log.func)(Info {
-                    route,
-                    start: self.started,
-                    status,
-                });
-            });
 
             result
         }

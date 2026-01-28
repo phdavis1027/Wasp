@@ -33,7 +33,7 @@ use self::then::Then;
 use self::unify::Unify;
 use self::untuple_one::UntupleOne;
 pub use self::wrap::wrap_fn;
-pub(crate) use self::wrap::Wrap;
+pub(crate) use self::wrap::{Wrap, WrapSealed};
 
 // A crate-private base trait, allowing the actual `filter` method to change
 // signatures without it being a breaking change.
