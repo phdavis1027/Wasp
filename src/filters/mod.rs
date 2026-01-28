@@ -4,5 +4,8 @@
 //! built-in filters. Most of these are available at more convenient paths.
 
 pub mod any;
+pub mod id;
+pub mod stanza;
 
 pub use crate::filter::BoxedFilter;
+pub use id::id;

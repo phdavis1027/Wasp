@@ -24,6 +24,7 @@
 //! [Filter]: trait.Filter.html
 //! [reject]: reject/index.html
 
+pub(crate) mod correlation;
 mod error;
 mod filter;
 mod filtered_stanza;
@@ -39,6 +40,15 @@ pub use self::error::Error;
 pub use self::filter::wrap_fn;
 pub use self::filter::Filter;
 pub use self::filters::any::any;
+pub use self::filters::id::id;
+pub mod id {
+    //! Stanza ID filters.
+    pub use crate::filters::id::param;
+}
+pub use self::filters::stanza::iq;
+pub use self::filters::stanza::message;
+pub use self::filters::stanza::presence;
+pub use self::filters::stanza::{recipient, reply, sender};
 pub use self::reject::{reject, Rejection};
 pub use self::reply::Reply;
 #[cfg(feature = "server")]

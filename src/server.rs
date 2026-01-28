@@ -5,6 +5,7 @@ use futures_util::TryFuture;
 use tokio_xmpp::connect::TcpServerConnector;
 use tokio_xmpp::{self, Component};
 
+use crate::correlation;
 use crate::filter::Filter;
 use crate::reject::IsReject;
 use crate::reply::Reply;
@@ -97,7 +98,13 @@ where
 }
 
 mod run {
-    use futures::StreamExt;
+    use std::cell::RefCell;
+
+    use futures::{SinkExt, StreamExt};
+    use tokio::sync::mpsc;
+    use tokio_xmpp::Stanza;
+
+    use crate::correlation::{self, CorrelationContext};
 
     pub trait Run {
         #[allow(async_fn_in_trait)]
@@ -120,38 +127,38 @@ mod run {
             <F::Future as super::TryFuture>::Error: super::IsReject,
             Self: Sized,
         {
-            loop {
-                let Some(stanza) = server.component.next().await else {
-                    tracing::debug!("stream closure");
-                    return;
-                };
+            let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Stanza>();
+            let ctx = RefCell::new(CorrelationContext::new(outbound_tx));
+            let svc = crate::service(server.filter.clone());
 
-                let svc = crate::service(server.filter.clone());
+            loop {
+                tokio::select! {
+                    stanza = server.component.next() => {
+                        let stanza = stanza.expect("XMPP stream closed unexpectedly");
+
+                        // Check if this stanza's ID is pending
+                        // if let Some(tx) = correlation::try_take_pending(&stanza) {
+                        //     tx.send(stanza).expect("failed to route response to pending request");
+                        //     continue;
+                        // }
+
+                        // Not pending - run through filters with ctx set
+
+                        let response = correlation::set(&ctx, || svc.call_stanza(stanza)).await;
+                        if let Ok(Some(reply)) = response {
+                            if let Err(err) = server.component.send(reply).await {
+                                tracing::error!("failed to send reply: {:?}", err);
+                            }
+                        }
+                    }
+
+                    Some(outbound) = outbound_rx.recv() => {
+                        if let Err(err) = server.component.send(outbound).await {
+                            tracing::error!("failed to send outbound stanza: {:?}", err);
+                        }
+                    }
+                }
             }
-            // while let Some(stanza) = server.component.next().await {}
-            // loop {
-            //     let svc = crate::service(server.filter.clone());
-            //     let svc = hyper_util::service::TowerToHyperService::new(svc);
-            //     tokio::spawn(async move {
-            //         let io = match server.component.next().await {
-            //             Ok(io) => io,
-            //             Err(err) => {
-            //                 tracing::debug!("server accept error: {:?}", err);
-            //                 return;
-            //             }
-            //         };
-            //         if let Err(err) = hyper_util::server::conn::auto::Builder::new(
-            //             hyper_util::rt::TokioExecutor::new(),
-            //         )
-            //         .http1()
-            //         .pipeline_flush(pipeline)
-            //         .serve_connection_with_upgrades(io, svc)
-            //         .await
-            //         {
-            //             tracing::error!("server connection error: {:?}", err)
-            //         }
-            //     });
-            // }
         }
     }
 
